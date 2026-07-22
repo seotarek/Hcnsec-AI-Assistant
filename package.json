@@ -3,7 +3,7 @@
   "displayName": "Hcnsec AI Assistant",
   "description": "AI Assistant powered by Hcnsec API",
   "publisher": "antigravity",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "engines": {
     "vscode": "^1.74.0"
   },
