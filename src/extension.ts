@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as https from 'https';
 
 export function activate(context: vscode.ExtensionContext) {
+    vscode.window.showInformationMessage('Hcnsec AI Extension Activated!');
     const provider = new HcnsecViewProvider(context.extensionUri);
     
     context.subscriptions.push(
@@ -44,6 +45,7 @@ class HcnsecViewProvider implements vscode.WebviewViewProvider {
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
+        vscode.window.showInformationMessage('Hcnsec Webview is resolving...');
         this._view = webviewView;
 
         webviewView.webview.options = {
@@ -157,9 +159,10 @@ class HcnsecViewProvider implements vscode.WebviewViewProvider {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
     <title>Hcnsec AI</title>
     <style>
-        body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-foreground); display: flex; flex-direction: column; height: 100vh; margin: 0; box-sizing: border-box; }
+        body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-foreground); display: flex; flex-direction: column; height: 100%; margin: 0; box-sizing: border-box; }
         .settings-panel { padding: 10px; background: var(--vscode-sideBarSectionHeader-background); border-radius: 4px; margin-bottom: 10px; font-size: 12px; }
         .settings-panel input, .settings-panel select { width: 100%; margin: 5px 0; padding: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); box-sizing: border-box; }
         .settings-panel button { width: 100%; padding: 4px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
