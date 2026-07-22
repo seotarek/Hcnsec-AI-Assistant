@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import axios from 'axios';
+import * as https from 'https';
 
 export function activate(context: vscode.ExtensionContext) {
     const provider = new HcnsecViewProvider(context.extensionUri);
@@ -89,24 +89,53 @@ class HcnsecViewProvider implements vscode.WebviewViewProvider {
             return "❌ Error: Please enter your API Key in the settings below and save it.";
         }
 
-        try {
-            const response = await axios.post(endpoint || 'https://api.hcnsec.cn/v1/chat/completions', {
-                model: model,
-                messages: [
-                    { role: 'system', content: 'You are a helpful coding assistant inside VS Code.' },
-                    { role: 'user', content: prompt }
-                ]
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+        return new Promise((resolve) => {
+            try {
+                const urlObj = new URL(endpoint || 'https://api.hcnsec.cn/v1/chat/completions');
+                const options = {
+                    hostname: urlObj.hostname,
+                    port: urlObj.port || 443,
+                    path: urlObj.pathname + urlObj.search,
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                };
 
-            return response.data.choices[0].message.content;
-        } catch (error: any) {
-            return `❌ API Error: ${error.message}`;
-        }
+                const req = https.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => { data += chunk; });
+                    res.on('end', () => {
+                        try {
+                            const json = JSON.parse(data);
+                            if (json.choices && json.choices.length > 0) {
+                                resolve(json.choices[0].message.content);
+                            } else {
+                                resolve(`❌ API Error: ${json.error?.message || data}`);
+                            }
+                        } catch (e: any) {
+                            resolve(`❌ Parse Error: ${e.message}\nRaw Data: ${data}`);
+                        }
+                    });
+                });
+
+                req.on('error', (e) => {
+                    resolve(`❌ Request Error: ${e.message}`);
+                });
+
+                req.write(JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: 'system', content: 'You are a helpful coding assistant inside VS Code.' },
+                        { role: 'user', content: prompt }
+                    ]
+                }));
+                req.end();
+            } catch (error: any) {
+                resolve(`❌ Setup Error: ${error.message}`);
+            }
+        });
     }
 
     private _getHtmlForWebview() {
