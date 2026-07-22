@@ -1,0 +1,115 @@
+{
+  "name": "hcnsec-assistant",
+  "displayName": "Hcnsec AI Assistant",
+  "description": "AI Assistant powered by Hcnsec API",
+  "publisher": "antigravity",
+  "version": "1.1.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:hcnsec.askAI",
+    "onView:hcnsec-sidebar-view"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hcnsec-container",
+          "title": "Hcnsec AI",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "hcnsec-container": [
+        {
+          "type": "webview",
+          "id": "hcnsec-sidebar-view",
+          "name": "Chat & Settings",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "hcnsec.askAI",
+        "title": "Hcnsec: Ask AI (Selected Text)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "when": "editorHasSelection",
+          "command": "hcnsec.askAI",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Hcnsec AI Assistant",
+      "properties": {
+        "hcnsec.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Hcnsec API Key"
+        },
+        "hcnsec.model": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "DeepSeek-V4-Flash",
+            "DeepSeek-V4-Pro",
+            "glm-4.7",
+            "glm-5.2",
+            "kat-coder-pro-v2",
+            "kat-coder-pro-v2.5",
+            "Kimi-K2.6",
+            "MiniMax-M2.7",
+            "MiniMax-M3",
+            "Qwen3-Coder-Next-FP8",
+            "Qwen3.5-397B-A17B",
+            "Qwen3.6-35B-A3B",
+            "sensenova-6.7-flash-lite",
+            "sensenova-u1-fast",
+            "Spark-X2-Flash",
+            "step-3.5-flash",
+            "step-3.5-flash-2603",
+            "step-3.7-flash",
+            "step-image-edit-2",
+            "step-router-v1",
+            "stepaudio-2.5-asr",
+            "stepaudio-2.5-chat",
+            "stepaudio-2.5-realtime",
+            "stepaudio-2.5-tts"
+          ],
+          "description": "Model to use from available Hcnsec API models"
+        },
+        "hcnsec.endpoint": {
+          "type": "string",
+          "default": "https://api.hcnsec.cn/v1/chat/completions",
+          "description": "Custom API Endpoint URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
