@@ -5,6 +5,10 @@
   "publisher": "HcnsecAIAssistant",
   "version": "2.1.1",
   "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seotarek/Hcnsec-AI-Assistant.git"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },
