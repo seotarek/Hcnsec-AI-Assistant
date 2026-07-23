@@ -1,0 +1,57 @@
+import { I18nStrings } from './en';
+
+const zh: I18nStrings = {
+    appName: 'Hcnsec AI 助手',
+    save: '保存',
+    cancel: '取消',
+    test: '测试',
+    clear: '清除',
+    copy: '复制',
+    send: '发送',
+    thinking: '思考中...',
+    error: '错误',
+    success: '成功',
+
+    tabChat: '💬 对话',
+    tabSettings: '⚙️ 设置',
+
+    chatPlaceholder: '输入您的问题或粘贴代码...',
+    chatWelcome: '👋 您好！我是 Hcnsec AI 助手（新疆幻城网安科技公益大模型）。请问有什么可以帮您？',
+    sendFile: '📄 当前文件',
+    sendFolder: '📁 项目结构',
+    sendSelection: '🔍 选中代码',
+    projectSummary: '📋 项目摘要',
+    clearChat: '🗑️ 清除对话',
+    noEditor: '未找到活动文件。',
+    noSelection: '请先选择一些代码。',
+    noWorkspace: '未找到工作区文件夹。',
+    contextAdded: '上下文已添加到消息中。',
+    copied: '已复制！',
+
+    settingsTitle: '设置',
+    apiSection: '🔑 API 配置',
+    apiKey: 'API 密钥',
+    apiKeyPlaceholder: 'sk-...',
+    apiEndpoint: 'API 端点',
+    testConnection: '测试连接',
+    connectionOk: '✅ 连接成功！',
+    connectionFail: '❌ 连接失败：',
+    modelSection: '🤖 模型配置',
+    chatModel: '对话模型',
+    language: '🌍 语言',
+    agentSection: '🧠 智能代理模式',
+    agentMode: '启用智能代理模式',
+    agentModeDesc: '使用两个模型：一个负责规划，一个负责执行',
+    plannerModel: '规划模型',
+    executorModel: '执行模型',
+    settingsSaved: '✅ 设置保存成功！',
+
+    agentPlanTitle: '📋 执行计划',
+    agentApprove: '✅ 批准并执行',
+    agentReject: '❌ 拒绝',
+    agentExecuting: '⚡ 正在执行步骤',
+    agentStep: '步骤',
+    agentDone: '🎉 所有步骤已完成！',
+};
+
+export default zh;

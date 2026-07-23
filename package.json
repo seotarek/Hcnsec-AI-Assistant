@@ -1,19 +1,22 @@
 {
   "name": "hcnsec-assistant",
   "displayName": "Hcnsec AI Assistant",
-  "description": "AI Assistant powered by Hcnsec API",
+  "description": "Professional AI coding assistant powered by Hcnsec API — supports Arabic, English, Chinese | مساعد برمجي ذكي",
   "publisher": "antigravity",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
     "Machine Learning",
+    "Programming Languages",
     "Other"
   ],
+  "keywords": [
+    "AI", "assistant", "chat", "arabic", "chinese", "deepseek", "hcnsec", "copilot", "agent"
+  ],
   "activationEvents": [
-    "onCommand:hcnsec.askAI",
-    "onView:hcnsec-sidebar-view"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -30,8 +33,14 @@
       "hcnsec-container": [
         {
           "type": "webview",
-          "id": "hcnsec-sidebar-view",
-          "name": "Chat & Settings",
+          "id": "hcnsec-chat-view",
+          "name": "💬 Chat",
+          "icon": "resources/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "hcnsec-settings-view",
+          "name": "⚙️ Settings",
           "icon": "resources/icon.svg"
         }
       ]
@@ -39,7 +48,11 @@
     "commands": [
       {
         "command": "hcnsec.askAI",
-        "title": "Hcnsec: Ask AI (Selected Text)"
+        "title": "Hcnsec AI: Ask About This Code"
+      },
+      {
+        "command": "hcnsec.sendFile",
+        "title": "Hcnsec AI: Send Current File"
       }
     ],
     "menus": {
@@ -47,6 +60,10 @@
         {
           "when": "editorHasSelection",
           "command": "hcnsec.askAI",
+          "group": "1_modification"
+        },
+        {
+          "command": "hcnsec.sendFile",
           "group": "1_modification"
         }
       ]
@@ -57,44 +74,39 @@
         "hcnsec.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Your Hcnsec API Key"
-        },
-        "hcnsec.model": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "DeepSeek-V4-Flash",
-            "DeepSeek-V4-Pro",
-            "glm-4.7",
-            "glm-5.2",
-            "kat-coder-pro-v2",
-            "kat-coder-pro-v2.5",
-            "Kimi-K2.6",
-            "MiniMax-M2.7",
-            "MiniMax-M3",
-            "Qwen3-Coder-Next-FP8",
-            "Qwen3.5-397B-A17B",
-            "Qwen3.6-35B-A3B",
-            "sensenova-6.7-flash-lite",
-            "sensenova-u1-fast",
-            "Spark-X2-Flash",
-            "step-3.5-flash",
-            "step-3.5-flash-2603",
-            "step-3.7-flash",
-            "step-image-edit-2",
-            "step-router-v1",
-            "stepaudio-2.5-asr",
-            "stepaudio-2.5-chat",
-            "stepaudio-2.5-realtime",
-            "stepaudio-2.5-tts"
-          ],
-          "description": "Model to use from available Hcnsec API models"
+          "description": "Your Hcnsec API Key (sk-...)"
         },
         "hcnsec.endpoint": {
           "type": "string",
           "default": "https://api.hcnsec.cn/v1/chat/completions",
-          "description": "Custom API Endpoint URL"
+          "description": "API Endpoint URL"
+        },
+        "hcnsec.model": {
+          "type": "string",
+          "default": "auto",
+          "description": "Model to use for chat"
+        },
+        "hcnsec.language": {
+          "type": "string",
+          "default": "en",
+          "enum": ["en", "ar", "zh"],
+          "enumDescriptions": ["English", "العربية", "中文"],
+          "description": "UI Language"
+        },
+        "hcnsec.agentMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Agentic Mode (Planner + Executor)"
+        },
+        "hcnsec.plannerModel": {
+          "type": "string",
+          "default": "DeepSeek-V4-Pro",
+          "description": "Model for planning steps in Agent Mode"
+        },
+        "hcnsec.executorModel": {
+          "type": "string",
+          "default": "DeepSeek-V4-Flash",
+          "description": "Model for executing steps in Agent Mode"
         }
       }
     }

@@ -1,0 +1,57 @@
+import { I18nStrings } from './en';
+
+const ar: I18nStrings = {
+    appName: 'مساعد Hcnsec الذكي',
+    save: 'حفظ',
+    cancel: 'إلغاء',
+    test: 'اختبار',
+    clear: 'مسح',
+    copy: 'نسخ',
+    send: 'إرسال',
+    thinking: 'جارٍ التفكير...',
+    error: 'خطأ',
+    success: 'نجاح',
+
+    tabChat: '💬 الدردشة',
+    tabSettings: '⚙️ الإعدادات',
+
+    chatPlaceholder: 'اكتب سؤالك أو الصق الكود هنا...',
+    chatWelcome: '👋 مرحباً! أنا مساعد Hcnsec الذكي. كيف يمكنني مساعدتك اليوم؟',
+    sendFile: '📄 الملف الحالي',
+    sendFolder: '📁 هيكل المشروع',
+    sendSelection: '🔍 الكود المحدد',
+    projectSummary: '📋 ملخص المشروع',
+    clearChat: '🗑️ مسح المحادثة',
+    noEditor: 'لا يوجد ملف مفتوح حالياً.',
+    noSelection: 'يرجى تحديد بعض الكود أولاً.',
+    noWorkspace: 'لا يوجد مجلد عمل مفتوح.',
+    contextAdded: 'تم إضافة السياق للرسالة.',
+    copied: 'تم النسخ!',
+
+    settingsTitle: 'الإعدادات',
+    apiSection: '🔑 إعدادات الـ API',
+    apiKey: 'مفتاح الـ API',
+    apiKeyPlaceholder: 'sk-...',
+    apiEndpoint: 'عنوان الـ API',
+    testConnection: 'اختبار الاتصال',
+    connectionOk: '✅ الاتصال ناجح!',
+    connectionFail: '❌ فشل الاتصال: ',
+    modelSection: '🤖 إعدادات الموديل',
+    chatModel: 'موديل الدردشة',
+    language: '🌍 اللغة',
+    agentSection: '🧠 الوضع الوكيل',
+    agentMode: 'تفعيل الوضع الوكيل',
+    agentModeDesc: 'استخدام موديلين: أحدهما للتخطيط والآخر للتنفيذ',
+    plannerModel: 'موديل التخطيط',
+    executorModel: 'موديل التنفيذ',
+    settingsSaved: '✅ تم حفظ الإعدادات بنجاح!',
+
+    agentPlanTitle: '📋 خطة التنفيذ',
+    agentApprove: '✅ موافقة وتنفيذ',
+    agentReject: '❌ رفض',
+    agentExecuting: '⚡ جارٍ تنفيذ الخطوة',
+    agentStep: 'الخطوة',
+    agentDone: '🎉 تم إكمال جميع الخطوات!',
+};
+
+export default ar;
