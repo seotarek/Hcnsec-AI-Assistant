@@ -2,7 +2,7 @@
   "name": "hcnsec-assistant",
   "displayName": "Hcnsec AI Assistant",
   "description": "Professional AI coding assistant powered by Hcnsec API — supports Arabic, English, Chinese | مساعد برمجي ذكي",
-  "publisher": "antigravity",
+  "publisher": "HcnsecAIAssistant",
   "version": "2.1.0",
   "engines": {
     "vscode": "^1.74.0"
