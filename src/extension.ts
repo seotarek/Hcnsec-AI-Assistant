@@ -4,7 +4,7 @@ import { SettingsViewProvider } from './providers/SettingsViewProvider';
 import { getCurrentFileContext, getSelectionContext } from './services/ContextService';
 
 export function activate(context: vscode.ExtensionContext) {
-    const chatProvider = new ChatViewProvider(context.extensionUri);
+    const chatProvider = new ChatViewProvider(context.extensionUri, context);
     const settingsProvider = new SettingsViewProvider(context.extensionUri);
 
     context.subscriptions.push(

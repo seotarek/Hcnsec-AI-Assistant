@@ -14,7 +14,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _history: ChatMessage[] = [];
 
-    constructor(private readonly _extensionUri: vscode.Uri) { }
+    constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) {
+        // Listen for config changes and reload chat UI
+        _context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('hcnsec') && this._view) {
+                    this._view.webview.html = this._getHtml();
+                }
+            })
+        );
+    }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -55,28 +64,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         switch (data.type) {
             case 'sendMessage': {
                 if (!cfg.apiKey) {
-                    this._view?.webview.postMessage({
-                        type: 'botReply',
-                        text: '❌ ' + (cfg.language === 'ar'
-                            ? 'يرجى إدخال مفتاح الـ API في الإعدادات أولاً.'
-                            : cfg.language === 'zh'
-                                ? '请先在设置中输入 API 密钥。'
-                                : 'Please enter your API Key in Settings first.')
-                    });
+                    this._send('botReply', { text: t.language === 'ar'
+                        ? '❌ يرجى إدخال مفتاح الـ API في الإعدادات أولاً.'
+                        : '❌ Please enter your API Key in the Settings tab first.' });
                     return;
                 }
-
-                const userMsg: string = data.message;
-                this._history.push({ role: 'user', content: userMsg });
-
+                this._history.push({ role: 'user', content: data.message });
                 if (cfg.agentMode) {
-                    await this._runAgentMode(userMsg, cfg, t);
+                    await this._runAgentMode(data.message, cfg, t);
                 } else {
-                    await this._runNormalMode(cfg, t);
+                    await this._runNormalMode(cfg);
                 }
                 break;
             }
-
             case 'getContext': {
                 let context: string | null = null;
                 switch (data.contextType) {
@@ -85,91 +85,56 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     case 'folder': context = getFolderStructure(); break;
                     case 'summary': context = getProjectSummary(); break;
                 }
-                this._view?.webview.postMessage({ type: 'contextResult', context, contextType: data.contextType });
+                this._send('contextResult', { context, contextType: data.contextType });
                 break;
             }
-
             case 'approveAgentPlan': {
                 await this._executePlan(data.plan, cfg, t);
                 break;
             }
-
             case 'clearHistory': {
                 this._history = [];
                 break;
             }
-
-            case 'refreshLang': {
-                webviewReload(this._view);
-                break;
-            }
         }
     }
 
-    private async _runNormalMode(cfg: ReturnType<typeof this._getConfig>, t: ReturnType<typeof getStrings>) {
-        const apiCfg: ApiConfig = {
-            apiKey: cfg.apiKey,
-            endpoint: cfg.endpoint,
-            model: cfg.model
-        };
+    private _send(type: string, payload: object = {}) {
+        this._view?.webview.postMessage({ type, ...payload });
+    }
 
-        const messages: ChatMessage[] = [
-            { role: 'system', content: 'You are a helpful coding assistant inside VS Code.' },
-            ...this._history
-        ];
-
-        const reply = await callApi(apiCfg, messages);
+    private async _runNormalMode(cfg: ReturnType<typeof this._getConfig>) {
+        const reply = await callApi(
+            { apiKey: cfg.apiKey, endpoint: cfg.endpoint, model: cfg.model },
+            [{ role: 'system', content: 'You are a helpful coding assistant inside VS Code.' }, ...this._history]
+        );
         this._history.push({ role: 'assistant', content: reply });
-        this._view?.webview.postMessage({ type: 'botReply', text: reply });
+        this._send('botReply', { text: reply });
     }
 
     private async _runAgentMode(task: string, cfg: ReturnType<typeof this._getConfig>, t: ReturnType<typeof getStrings>) {
-        const plannerCfg: ApiConfig = {
-            apiKey: cfg.apiKey,
-            endpoint: cfg.endpoint,
-            model: cfg.plannerModel
-        };
-
-        this._view?.webview.postMessage({ type: 'agentPlanning' });
-
-        const planOrError = await generatePlan(task, plannerCfg, this._history);
-
+        this._send('agentPlanning');
+        const planOrError = await generatePlan(
+            task,
+            { apiKey: cfg.apiKey, endpoint: cfg.endpoint, model: cfg.plannerModel },
+            this._history
+        );
         if (typeof planOrError === 'string') {
-            this._view?.webview.postMessage({ type: 'botReply', text: planOrError });
-            return;
+            this._send('botReply', { text: planOrError });
+        } else {
+            this._send('showPlan', { plan: planOrError });
         }
-
-        // Ask user to approve the plan
-        this._view?.webview.postMessage({ type: 'showPlan', plan: planOrError });
     }
 
     private async _executePlan(plan: AgentPlan, cfg: ReturnType<typeof this._getConfig>, t: ReturnType<typeof getStrings>) {
-        const executorCfg: ApiConfig = {
-            apiKey: cfg.apiKey,
-            endpoint: cfg.endpoint,
-            model: cfg.executorModel
-        };
-
+        const execCfg: ApiConfig = { apiKey: cfg.apiKey, endpoint: cfg.endpoint, model: cfg.executorModel };
         for (const step of plan.steps) {
-            this._view?.webview.postMessage({
-                type: 'agentStepStart',
-                stepNum: step.step,
-                title: step.title,
-                total: plan.steps.length
-            });
-
-            const result = await executeStep(step, executorCfg, this._history);
+            this._send('agentStepStart', { stepNum: step.step, title: step.title, total: plan.steps.length });
+            const result = await executeStep(step, execCfg, this._history);
             this._history.push({ role: 'assistant', content: result });
-
-            this._view?.webview.postMessage({
-                type: 'agentStepResult',
-                stepNum: step.step,
-                title: step.title,
-                result
-            });
+            this._send('agentStepResult', { stepNum: step.step, title: step.title, result });
         }
-
-        this._view?.webview.postMessage({ type: 'agentDone' });
+        this._send('agentDone');
     }
 
     private _getHtml(): string {
@@ -177,7 +142,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const t = getStrings(cfg.language);
         const rtl = isRTL(cfg.language);
         const dir = rtl ? 'rtl' : 'ltr';
-        const textAlign = rtl ? 'right' : 'left';
+
+        const noKey = !cfg.apiKey;
+        const modelLabel = cfg.agentMode
+            ? `🧠 ${cfg.plannerModel} → ${cfg.executorModel}`
+            : `${cfg.model}`;
 
         return `<!DOCTYPE html>
 <html lang="${cfg.language}" dir="${dir}">
@@ -185,169 +154,328 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-<title>${t.appName}</title>
+<title>Hcnsec Chat</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: var(--vscode-font-family, 'Segoe UI', system-ui, sans-serif);
-    font-size: var(--vscode-font-size, 13px);
-    color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
-    display: flex;
-    flex-direction: column;
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
     height: 100%;
     overflow: hidden;
-    direction: ${dir};
   }
-  /* Context Buttons */
-  .ctx-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 6px 8px;
-    background: var(--vscode-sideBarSectionHeader-background);
-    border-bottom: 1px solid var(--vscode-panel-border, #333);
-  }
-  .ctx-btn {
-    font-size: 11px;
-    padding: 2px 7px;
-    border: 1px solid var(--vscode-button-border, #555);
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border-radius: 3px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .ctx-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .clear-btn {
-    margin-${rtl ? 'right' : 'left'}: auto;
-    background: transparent;
-    border: none;
-    color: var(--vscode-descriptionForeground);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 2px 5px;
-  }
-  .clear-btn:hover { color: var(--vscode-foreground); }
 
-  /* Chat area */
-  .chat-box {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
+  body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-foreground);
+    background: transparent;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    height: 100vh;
+    direction: ${dir};
   }
-  .chat-box::-webkit-scrollbar { width: 4px; }
-  .chat-box::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 2px; }
 
-  .msg {
-    max-width: 92%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    line-height: 1.5;
-    position: relative;
-    word-wrap: break-word;
-  }
-  .msg-user {
-    align-self: ${rtl ? 'flex-start' : 'flex-end'};
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border-bottom-${rtl ? 'left' : 'right'}-radius: 2px;
-    text-align: ${textAlign};
-  }
-  .msg-bot {
-    align-self: ${rtl ? 'flex-end' : 'flex-start'};
-    background: var(--vscode-editorWidget-background);
-    border: 1px solid var(--vscode-panel-border, #333);
-    border-bottom-${rtl ? 'right' : 'left'}-radius: 2px;
-    text-align: ${textAlign};
-  }
-  .msg-bot .copy-btn {
-    position: absolute;
-    top: 4px;
-    ${rtl ? 'left' : 'right'}: 4px;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: none;
-    border-radius: 3px;
-    font-size: 10px;
-    padding: 1px 5px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  .msg-bot:hover .copy-btn { opacity: 1; }
-
-  /* Code blocks */
-  pre {
-    background: var(--vscode-editor-background);
-    border: 1px solid var(--vscode-panel-border, #333);
-    border-radius: 4px;
-    padding: 8px;
-    overflow-x: auto;
-    margin: 6px 0;
-    font-family: var(--vscode-editor-font-family, monospace);
+  /* ── No API Key banner ── */
+  .no-key-banner {
+    background: color-mix(in srgb, var(--vscode-inputValidation-warningBackground, #6b4c00) 60%, transparent);
+    border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
+    padding: 6px 12px;
     font-size: 12px;
-    direction: ltr;
-    text-align: left;
-  }
-  code { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-  p { margin: 4px 0; }
-  ul, ol { margin: 4px 0; padding-${rtl ? 'right' : 'left'}: 20px; }
-  h1,h2,h3 { margin: 6px 0 3px; }
-  strong { font-weight: 600; }
-
-  /* Thinking indicator */
-  .thinking {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: var(--vscode-descriptionForeground);
-    font-style: italic;
-    font-size: 12px;
-    padding: 6px 8px;
+    cursor: pointer;
   }
-  .dots span {
-    animation: blink 1.2s infinite;
-    opacity: 0;
-  }
-  .dots span:nth-child(2) { animation-delay: 0.2s; }
-  .dots span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes blink { 0%,100%{opacity:0} 50%{opacity:1} }
+  .no-key-banner:hover { filter: brightness(1.2); }
 
-  /* Agent Plan */
-  .plan-box {
-    background: var(--vscode-editorWidget-background);
-    border: 1px solid var(--vscode-textLink-foreground, #4080c0);
-    border-radius: 6px;
-    padding: 10px;
-    margin: 4px 0;
-  }
-  .plan-box h3 { margin-bottom: 8px; color: var(--vscode-textLink-foreground); }
-  .plan-step {
+  /* ── Model strip ── */
+  .model-strip {
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
     display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin: 5px 0;
-    font-size: 12px;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
   }
-  .step-num {
-    min-width: 22px;
-    height: 22px;
+  .model-dot {
+    width: 6px; height: 6px;
     border-radius: 50%;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
+    background: #4caf50;
+    flex-shrink: 0;
+  }
+  .model-name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .agent-badge {
+    background: var(--vscode-badge-background, #4d4daa);
+    color: var(--vscode-badge-foreground, #fff);
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+
+  /* ── Context buttons (collapsible) ── */
+  .ctx-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
+    background: var(--vscode-sideBar-background);
+  }
+  .ctx-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    padding: 2px 7px;
+    border: 1px solid var(--vscode-button-border, transparent);
+    background: var(--vscode-button-secondaryBackground, #3c3c3c);
+    color: var(--vscode-button-secondaryForeground, #ccc);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .ctx-btn:hover { background: var(--vscode-button-secondaryHoverBackground, #555); }
+  .ctx-btn:active { transform: scale(0.97); }
+
+  /* ── Context preview pill ── */
+  .ctx-pill {
+    margin: 4px 8px;
+    background: var(--vscode-textBlockQuote-background, rgba(255,255,255,.05));
+    border: 1px solid var(--vscode-textBlockQuote-border, #444);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+  }
+  .ctx-pill-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctx-pill-remove {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .ctx-pill-remove:hover { color: var(--vscode-foreground); }
+
+  /* ── Chat messages ── */
+  .chat-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: var(--vscode-scrollbarSlider-background, #444) transparent;
+  }
+  .chat-scroll::-webkit-scrollbar { width: 4px; }
+  .chat-scroll::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, #444); border-radius: 2px; }
+
+  /* Welcome screen */
+  .welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px;
+    color: var(--vscode-descriptionForeground);
+    text-align: center;
+  }
+  .welcome-icon { font-size: 36px; }
+  .welcome-title { font-size: 14px; font-weight: 600; color: var(--vscode-foreground); }
+  .welcome-sub { font-size: 12px; line-height: 1.5; }
+  .welcome-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 6px; }
+  .welcome-chip {
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid var(--vscode-button-border, #555);
+    border-radius: 12px;
+    cursor: pointer;
+    background: var(--vscode-button-secondaryBackground, #3c3c3c);
+    color: var(--vscode-button-secondaryForeground, #ccc);
+    transition: background 0.15s;
+  }
+  .welcome-chip:hover { background: var(--vscode-button-secondaryHoverBackground, #555); }
+
+  /* Message row */
+  .msg-row {
+    display: flex;
+    padding: 4px 10px;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .msg-row:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.03)); }
+
+  .avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
-    font-weight: bold;
+    font-size: 13px;
+    margin-top: 1px;
   }
-  .step-info strong { display: block; margin-bottom: 2px; }
-  .step-info span { color: var(--vscode-descriptionForeground); }
-  .plan-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .avatar-user { background: var(--vscode-button-background, #0e639c); }
+  .avatar-bot { background: var(--vscode-badge-background, #4d4daa); }
+
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-author {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .msg-copy {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    padding: 0 4px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .msg-row:hover .msg-copy { opacity: 1; }
+  .msg-copy:hover { background: var(--vscode-toolbar-hoverBackground, #3c3c3c); color: var(--vscode-foreground); }
+
+  .msg-content {
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg-content.rtl-text { direction: rtl; text-align: right; unicode-bidi: plaintext; }
+
+  /* Code blocks */
+  .code-block-wrap { position: relative; margin: 6px 0; }
+  .code-lang-label {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    padding: 3px 8px;
+    background: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--vscode-panel-border, #333);
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    font-family: var(--vscode-editor-font-family, monospace);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .code-copy-btn {
+    background: none;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 4px;
+  }
+  .code-copy-btn:hover { color: var(--vscode-foreground); }
+  pre {
+    background: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--vscode-panel-border, #333);
+    border-radius: 0 0 4px 4px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    font-family: var(--vscode-editor-font-family, 'Courier New', monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    direction: ltr;
+    text-align: left;
+    white-space: pre;
+  }
+  .has-lang pre { border-radius: 0 4px 4px 4px; }
+  code { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+  .inline-code {
+    background: var(--vscode-textBlockQuote-background, rgba(255,255,255,.1));
+    border: 1px solid var(--vscode-panel-border, #3a3a3a);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+  }
+  h1,h2,h3 { margin: 8px 0 4px; font-weight: 600; }
+  h1 { font-size: 16px; }
+  h2 { font-size: 14px; }
+  h3 { font-size: 13px; }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+  ul, ol { padding-${dir === 'rtl' ? 'right' : 'left'}: 18px; margin: 4px 0; }
+  li { margin: 2px 0; }
+  hr { border: none; border-top: 1px solid var(--vscode-panel-border, #333); margin: 8px 0; }
+  blockquote {
+    border-${dir === 'rtl' ? 'right' : 'left'}: 3px solid var(--vscode-textBlockQuote-border, #555);
+    padding-${dir === 'rtl' ? 'right' : 'left'}: 10px;
+    color: var(--vscode-descriptionForeground);
+    margin: 4px 0;
+  }
+
+  /* Thinking / loading */
+  .thinking-row { display: flex; padding: 6px 10px; gap: 8px; align-items: center; }
+  .thinking-dots { display: flex; gap: 3px; }
+  .thinking-dots span {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--vscode-descriptionForeground);
+    animation: pulse 1.2s ease-in-out infinite;
+    opacity: 0.4;
+  }
+  .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes pulse { 0%,100%{opacity:.2;transform:scale(.8)} 50%{opacity:1;transform:scale(1)} }
+
+  /* Agent plan */
+  .plan-card {
+    margin: 6px 10px;
+    border: 1px solid var(--vscode-textLink-foreground, #4080c0);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .plan-header {
+    background: color-mix(in srgb, var(--vscode-textLink-foreground, #4080c0) 15%, transparent);
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .plan-steps { padding: 8px 12px; }
+  .plan-step {
+    display: flex;
+    gap: 8px;
+    margin: 6px 0;
+    align-items: flex-start;
+  }
+  .plan-num {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    font-size: 10px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .plan-step-body strong { display: block; font-size: 12px; margin-bottom: 2px; }
+  .plan-step-body span { font-size: 11px; color: var(--vscode-descriptionForeground); }
+  .plan-footer { padding: 8px 12px; display: flex; gap: 8px; border-top: 1px solid var(--vscode-panel-border, #333); }
   .btn-approve {
     flex: 1;
     padding: 5px;
@@ -360,328 +488,418 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
   .btn-approve:hover { background: var(--vscode-button-hoverBackground); }
   .btn-reject {
-    flex: 1;
-    padding: 5px;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: 1px solid var(--vscode-button-border, #555);
+    padding: 5px 12px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-panel-border, #555);
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
   }
-  .btn-reject:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .btn-reject:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
 
   /* Step progress */
-  .step-progress {
-    background: var(--vscode-editorWidget-background);
-    border-${rtl ? 'right' : 'left'}: 3px solid var(--vscode-textLink-foreground, #4080c0);
-    padding: 6px 10px;
-    border-radius: 0 4px 4px 0;
-    font-size: 12px;
-  }
-  .step-progress.done { border-color: #4caf50; }
-
-  /* Context preview */
-  .ctx-preview {
-    background: var(--vscode-textBlockQuote-background);
-    border-${rtl ? 'right' : 'left'}: 3px solid var(--vscode-textBlockQuote-border, #4080c0);
-    padding: 5px 8px;
+  .step-bar {
+    margin: 2px 10px;
+    padding: 5px 10px;
+    border-${dir === 'rtl' ? 'right' : 'left'}: 2px solid var(--vscode-textLink-foreground, #4080c0);
     font-size: 11px;
-    border-radius: 0 3px 3px 0;
     color: var(--vscode-descriptionForeground);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
-  .ctx-clear {
-    float: ${rtl ? 'left' : 'right'};
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
+  .step-bar.done { border-color: #4caf50; color: var(--vscode-foreground); }
 
-  /* Input */
-  .input-area {
+  /* ── Input area ── */
+  .input-wrapper {
+    border-top: 1px solid var(--vscode-panel-border, #2d2d2d);
     padding: 8px;
-    border-top: 1px solid var(--vscode-panel-border, #333);
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
+    background: var(--vscode-sideBar-background);
+  }
+  .input-box {
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: 6px;
+    background: var(--vscode-input-background, #3c3c3c);
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .input-box:focus-within {
+    border-color: var(--vscode-focusBorder, #007acc);
   }
   textarea {
     width: 100%;
-    min-height: 55px;
-    max-height: 150px;
-    background: var(--vscode-input-background);
+    min-height: 44px;
+    max-height: 140px;
+    background: transparent;
     color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, #555);
-    border-radius: 4px;
-    padding: 6px 8px;
-    resize: vertical;
+    border: none;
+    outline: none;
+    padding: 8px 10px;
+    resize: none;
     font-family: inherit;
     font-size: 13px;
+    line-height: 1.5;
     direction: ${dir};
-    text-align: ${textAlign};
+    display: block;
+    overflow-y: auto;
   }
-  textarea:focus { outline: 1px solid var(--vscode-focusBorder); border-color: var(--vscode-focusBorder); }
-  .send-row { display: flex; gap: 5px; }
+  .input-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+  }
+  .input-hint { font-size: 10px; color: var(--vscode-descriptionForeground); }
   .send-btn {
-    flex: 1;
-    padding: 6px;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #fff);
     border: none;
     border-radius: 4px;
+    padding: 4px 12px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s;
   }
-  .send-btn:hover { background: var(--vscode-button-hoverBackground); }
-  .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .agent-badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: var(--vscode-badge-background);
-    color: var(--vscode-badge-foreground);
-    border-radius: 10px;
-    align-self: center;
-  }
+  .send-btn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+  .send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>
 </head>
 <body>
-<!-- Context bar -->
-<div class="ctx-bar">
-  <button class="ctx-btn" onclick="addContext('file')">${t.sendFile}</button>
-  <button class="ctx-btn" onclick="addContext('folder')">${t.sendFolder}</button>
-  <button class="ctx-btn" onclick="addContext('selection')">${t.sendSelection}</button>
-  <button class="ctx-btn" onclick="addContext('summary')">${t.projectSummary}</button>
-  <button class="clear-btn" onclick="clearChat()" title="${t.clearChat}">🗑️</button>
+
+${noKey ? `<div class="no-key-banner" title="Go to Settings tab">⚠️ ${
+    cfg.language === 'ar' ? 'لم يتم إدخال مفتاح API — انقر لفتح الإعدادات' :
+    cfg.language === 'zh' ? '未设置 API 密钥 — 点击打开设置' :
+    'API Key not set — click to open Settings'
+}</div>` : ''}
+
+<div class="model-strip">
+  <div class="model-dot" ${noKey ? 'style="background:#f48771"' : ''}></div>
+  <span class="model-name">${modelLabel}</span>
+  ${cfg.agentMode ? `<span class="agent-badge">AGENT</span>` : ''}
 </div>
 
-<!-- Context preview -->
-<div id="ctxPreview" style="display:none;" class="ctx-preview">
-  <button class="ctx-clear" onclick="clearCtx()">✕</button>
-  <span id="ctxText"></span>
+<div class="ctx-toolbar">
+  <button class="ctx-btn" onclick="addCtx('file')">📄 ${t.sendFile}</button>
+  <button class="ctx-btn" onclick="addCtx('folder')">📁 ${t.sendFolder}</button>
+  <button class="ctx-btn" onclick="addCtx('selection')">🔍 ${t.sendSelection}</button>
+  <button class="ctx-btn" onclick="addCtx('summary')">📋 ${t.projectSummary}</button>
+  <button class="ctx-btn" style="margin-${dir === 'rtl' ? 'right' : 'left'}:auto; border-color:transparent; background:transparent;" onclick="clearAll()" title="${t.clearChat}">🗑️</button>
 </div>
 
-<!-- Chat messages -->
-<div class="chat-box" id="chatBox">
-  <div class="msg msg-bot">
-    <button class="copy-btn" onclick="copyMsg(this)">${t.copy}</button>
-    ${t.chatWelcome}
+<div id="ctxPill" style="display:none" class="ctx-pill">
+  <span>📎</span>
+  <span class="ctx-pill-label" id="ctxPillLabel"></span>
+  <button class="ctx-pill-remove" onclick="clearCtx()">✕</button>
+</div>
+
+<div class="chat-scroll" id="chatBox">
+  <div class="welcome" id="welcome">
+    <div class="welcome-icon">🤖</div>
+    <div class="welcome-title">${t.chatWelcome.replace('👋 ', '')}</div>
+    <div class="welcome-sub">${
+      cfg.language === 'ar' ? 'يمكنك سؤالي عن الكود، الأخطاء، أو إرسال ملف كامل للتحليل' :
+      cfg.language === 'zh' ? '您可以向我询问代码、错误，或发送完整文件进行分析' :
+      'Ask me about code, errors, or send a full file for analysis'
+    }</div>
+    <div class="welcome-chips">
+      <span class="welcome-chip" onclick="quickAsk('${cfg.language === 'ar' ? 'اشرح لي الكود المحدد' : cfg.language === 'zh' ? '解释选中的代码' : 'Explain selected code'}')">
+        ${cfg.language === 'ar' ? '💡 اشرح الكود' : cfg.language === 'zh' ? '💡 解释代码' : '💡 Explain code'}
+      </span>
+      <span class="welcome-chip" onclick="quickAsk('${cfg.language === 'ar' ? 'أصلح الأخطاء في هذا الكود' : cfg.language === 'zh' ? '修复这段代码中的错误' : 'Fix bugs in this code'}')">
+        ${cfg.language === 'ar' ? '🐛 إصلاح الأخطاء' : cfg.language === 'zh' ? '🐛 修复错误' : '🐛 Fix bugs'}
+      </span>
+      <span class="welcome-chip" onclick="quickAsk('${cfg.language === 'ar' ? 'حسّن جودة هذا الكود' : cfg.language === 'zh' ? '优化这段代码' : 'Refactor and optimize this code'}')">
+        ${cfg.language === 'ar' ? '⚡ تحسين الكود' : cfg.language === 'zh' ? '⚡ 优化代码' : '⚡ Optimize'}
+      </span>
+    </div>
   </div>
 </div>
 
-<!-- Input area -->
-<div class="input-area">
-  <textarea id="prompt" placeholder="${t.chatPlaceholder}" onkeydown="handleKey(event)"></textarea>
-  <div class="send-row">
-    <button class="send-btn" id="sendBtn" onclick="sendMsg()">${t.send}</button>
-    ${cfg.agentMode ? `<span class="agent-badge">🤖 Agent</span>` : ''}
+<div class="input-wrapper">
+  <div class="input-box">
+    <textarea id="prompt" placeholder="${t.chatPlaceholder}" rows="2"
+      onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+    <div class="input-footer">
+      <span class="input-hint">${
+        cfg.language === 'ar' ? 'Enter للإرسال • Shift+Enter للسطر الجديد' :
+        cfg.language === 'zh' ? 'Enter 发送 • Shift+Enter 换行' :
+        'Enter to send • Shift+Enter for new line'
+      }</span>
+      <button class="send-btn" id="sendBtn" onclick="sendMsg()">
+        ${cfg.language === 'ar' ? 'إرسال ↵' : cfg.language === 'zh' ? '发送 ↵' : 'Send ↵'}
+      </button>
+    </div>
   </div>
 </div>
 
 <script>
 const vscode = acquireVsCodeApi();
-let pendingContext = null;
+let pendingCtx = null;
 let pendingPlan = null;
+let msgCount = 0;
+const isRTL = ${rtl};
 
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMsg();
-  }
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
 }
 
-function addContext(type) {
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+}
+
+function quickAsk(text) {
+  document.getElementById('prompt').value = text;
+  sendMsg();
+}
+
+function addCtx(type) {
   vscode.postMessage({ type: 'getContext', contextType: type });
 }
 
 function clearCtx() {
-  pendingContext = null;
-  document.getElementById('ctxPreview').style.display = 'none';
+  pendingCtx = null;
+  document.getElementById('ctxPill').style.display = 'none';
 }
 
-function clearChat() {
+function clearAll() {
+  msgCount = 0;
   document.getElementById('chatBox').innerHTML =
-    '<div class="msg msg-bot"><button class="copy-btn" onclick="copyMsg(this)">${t.copy}</button>${t.chatWelcome}</div>';
+    document.getElementById('chatBox').querySelector('.welcome')?.outerHTML || '';
+  showWelcome(true);
   vscode.postMessage({ type: 'clearHistory' });
+}
+
+function showWelcome(show) {
+  const w = document.getElementById('welcome');
+  if (w) w.style.display = show ? 'flex' : 'none';
 }
 
 function sendMsg() {
   const ta = document.getElementById('prompt');
   let text = ta.value.trim();
-  if (!text) return;
+  if (!text || document.getElementById('sendBtn').disabled) return;
 
-  if (pendingContext) {
-    text = pendingContext + '\\n\\n---\\n' + text;
-    clearCtx();
-  }
+  let fullMsg = text;
+  if (pendingCtx) { fullMsg = pendingCtx + '\\n\\n---\\n\\n' + text; clearCtx(); }
 
-  appendMsg(ta.value.trim(), true);
+  showWelcome(false);
+  appendUserMsg(text);
   ta.value = '';
-  setSending(true);
-  vscode.postMessage({ type: 'sendMessage', message: text });
+  ta.style.height = 'auto';
+  setBusy(true);
+  vscode.postMessage({ type: 'sendMessage', message: fullMsg });
 }
 
-function appendMsg(text, isUser) {
+function appendUserMsg(text) {
+  msgCount++;
   const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = 'msg ' + (isUser ? 'msg-user' : 'msg-bot');
-  if (!isUser) {
-    const cb = document.createElement('button');
-    cb.className = 'copy-btn';
-    cb.textContent = '${t.copy}';
-    cb.onclick = function() { copyMsg(this); };
-    div.appendChild(cb);
-  }
-  const content = document.createElement('div');
-  content.className = 'msg-content';
-  content.innerHTML = isUser ? escHtml(text) : renderMarkdown(text);
-  div.appendChild(content);
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
-  return div;
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = \`
+    <div class="avatar avatar-user">👤</div>
+    <div class="msg-body">
+      <div class="msg-author">${cfg.language === 'ar' ? 'أنت' : cfg.language === 'zh' ? '您' : 'You'}</div>
+      <div class="msg-content\${isRTL ? ' rtl-text' : ''}">\${esc(text)}</div>
+    </div>
+  \`;
+  box.appendChild(row);
+  scrollBottom();
+}
+
+function appendBotMsg(text) {
+  removeThinking();
+  const box = document.getElementById('chatBox');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  const id = 'msg-' + (++msgCount);
+  row.innerHTML = \`
+    <div class="avatar avatar-bot">✦</div>
+    <div class="msg-body">
+      <div class="msg-author">
+        Hcnsec AI
+        <button class="msg-copy" onclick="copyText('\${id}')" title="${t.copy}">⎘ ${t.copy}</button>
+      </div>
+      <div class="msg-content" id="\${id}">\${renderMd(text)}</div>
+    </div>
+  \`;
+  box.appendChild(row);
+  scrollBottom();
 }
 
 function showThinking() {
   const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = 'thinking';
-  div.id = 'thinkingMsg';
-  div.innerHTML = '<span>🤖</span><span>${t.thinking}</span><span class="dots"><span>.</span><span>.</span><span>.</span></span>';
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  const d = document.createElement('div');
+  d.className = 'thinking-row';
+  d.id = 'thinking';
+  d.innerHTML = \`
+    <div class="avatar avatar-bot" style="opacity:.5">✦</div>
+    <div class="thinking-dots"><span></span><span></span><span></span></div>
+  \`;
+  box.appendChild(d);
+  scrollBottom();
 }
 
 function removeThinking() {
-  const el = document.getElementById('thinkingMsg');
-  if (el) el.remove();
+  document.getElementById('thinking')?.remove();
 }
 
-function setSending(busy) {
-  const btn = document.getElementById('sendBtn');
-  btn.disabled = busy;
+function setBusy(busy) {
+  document.getElementById('sendBtn').disabled = busy;
   if (busy) showThinking();
 }
 
-function escHtml(t) {
+function scrollBottom() {
+  const box = document.getElementById('chatBox');
+  box.scrollTop = box.scrollHeight;
+}
+
+function esc(t) {
   return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>');
 }
 
-function renderMarkdown(text) {
-  return text
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\`\`\`([\\w]*)?\\n([\\s\\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>')
-    .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
-    .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\\/li>)/gs, '<ul>$1</ul>')
-    .replace(/\\n/g, '<br>');
-}
+function renderMd(raw) {
+  // Escape HTML first, but we'll handle code blocks separately
+  let text = raw;
 
-function copyMsg(btn) {
-  const content = btn.parentElement.querySelector('.msg-content');
-  const text = content ? content.innerText : btn.parentElement.innerText;
-  navigator.clipboard.writeText(text).then(() => {
-    const orig = btn.textContent;
-    btn.textContent = '${t.copied}';
-    setTimeout(() => btn.textContent = orig, 1500);
+  // Fenced code blocks
+  text = text.replace(/\`\`\`([\\w.-]*)?\\n?([\\s\\S]*?)\`\`\`/g, (_, lang, code) => {
+    const l = (lang || '').trim();
+    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const id = 'cb' + Math.random().toString(36).slice(2,7);
+    if (l) {
+      return \`<div class="code-block-wrap has-lang">
+        <div class="code-lang-label"><span>\${l}</span><button class="code-copy-btn" onclick="copyCode('\${id}')">${t.copy}</button></div>
+        <pre id="\${id}">\${escaped}</pre></div>\`;
+    }
+    return \`<div class="code-block-wrap"><pre id="\${id}">\${escaped}</pre></div>\`;
   });
+
+  // Inline code
+  text = text.replace(/\`([^\`\\n]+)\`/g, '<span class="inline-code">$1</span>');
+
+  // Escape remaining HTML (excluding what we've done)
+  text = text.replace(/(?<!<[^>]*)&(?![^;]+;)/g, '&amp;');
+
+  // Headings
+  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // Bold / italic
+  text = text.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+  text = text.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+  // HR
+  text = text.replace(/^---+$/gm, '<hr>');
+  // Blockquote
+  text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  // Lists
+  text = text.replace(/^[\\*\\-] (.+)$/gm, '<li>$1</li>');
+  text = text.replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>');
+  // Newlines → <br> (but not inside block elements)
+  text = text.replace(/\\n(?!<\\/?(h[123]|pre|li|ul|ol|blockquote|hr|div))/g, '<br>');
+
+  return text;
 }
 
+function copyText(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.innerText).catch(() => {});
+}
+
+function copyCode(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.innerText).catch(() => {});
+}
+
+// Plan UI
 function showPlan(plan) {
   removeThinking();
-  setSending(false);
+  setBusy(false);
   pendingPlan = plan;
   const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = 'plan-box';
-
-  let stepsHtml = plan.steps.map(s => \`
+  const card = document.createElement('div');
+  card.className = 'plan-card';
+  card.id = 'plan-card';
+  const stepsHtml = plan.steps.map(s => \`
     <div class="plan-step">
-      <div class="step-num">\${s.step}</div>
-      <div class="step-info">
-        <strong>\${escHtml(s.title)}</strong>
-        <span>\${escHtml(s.description)}</span>
+      <div class="plan-num">\${s.step}</div>
+      <div class="plan-step-body">
+        <strong>\${esc(s.title)}</strong>
+        <span>\${esc(s.description)}</span>
       </div>
     </div>
   \`).join('');
-
-  div.innerHTML = \`
-    <h3>${t.agentPlanTitle}: \${escHtml(plan.goal)}</h3>
-    \${stepsHtml}
-    <div class="plan-actions">
+  card.innerHTML = \`
+    <div class="plan-header">📋 ${t.agentPlanTitle}: \${esc(plan.goal)}</div>
+    <div class="plan-steps">\${stepsHtml}</div>
+    <div class="plan-footer">
       <button class="btn-approve" onclick="approvePlan()">${t.agentApprove}</button>
       <button class="btn-reject" onclick="rejectPlan()">${t.agentReject}</button>
     </div>
   \`;
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  box.appendChild(card);
+  scrollBottom();
 }
 
 function approvePlan() {
-  if (!pendingPlan) return;
-  document.querySelectorAll('.plan-actions').forEach(el => el.remove());
+  document.getElementById('plan-card')?.querySelector('.plan-footer')?.remove();
+  setBusy(true);
   vscode.postMessage({ type: 'approveAgentPlan', plan: pendingPlan });
   pendingPlan = null;
-  setSending(true);
 }
 
 function rejectPlan() {
+  document.getElementById('plan-card')?.remove();
   pendingPlan = null;
-  document.querySelectorAll('.plan-box').forEach(el => el.remove());
 }
 
 window.addEventListener('message', e => {
   const msg = e.data;
   switch(msg.type) {
     case 'botReply':
-      removeThinking();
-      setSending(false);
-      appendMsg(msg.text, false);
+      setBusy(false);
+      appendBotMsg(msg.text);
       break;
     case 'insertText':
       document.getElementById('prompt').value = msg.text;
+      autoResize(document.getElementById('prompt'));
+      document.getElementById('prompt').focus();
       break;
     case 'contextResult':
       if (msg.context) {
-        pendingContext = msg.context;
-        const preview = document.getElementById('ctxPreview');
-        const ctxText = document.getElementById('ctxText');
-        preview.style.display = 'block';
-        ctxText.textContent = '📎 ' + msg.context.split('\\n')[0].replace(/\\*\\*/g,'');
+        pendingCtx = msg.context;
+        const pill = document.getElementById('ctxPill');
+        pill.style.display = 'flex';
+        document.getElementById('ctxPillLabel').textContent =
+          msg.context.split('\\n')[0].replace(/\\*\\*/g,'').trim();
       }
-      break;
-    case 'agentPlanning':
       break;
     case 'showPlan':
       showPlan(msg.plan);
       break;
     case 'agentStepStart':
       removeThinking();
-      const stepDiv = document.createElement('div');
-      stepDiv.className = 'step-progress';
-      stepDiv.id = 'step-' + msg.stepNum;
-      stepDiv.textContent = '${t.agentExecuting} ' + msg.stepNum + '/' + msg.total + ': ' + msg.title;
-      document.getElementById('chatBox').appendChild(stepDiv);
-      document.getElementById('chatBox').scrollTop = document.getElementById('chatBox').scrollHeight;
+      const sb = document.createElement('div');
+      sb.className = 'step-bar';
+      sb.id = 'step-' + msg.stepNum;
+      sb.textContent = '⚡ ${t.agentExecuting} ' + msg.stepNum + '/' + msg.total + ' — ' + msg.title;
+      document.getElementById('chatBox').appendChild(sb);
       showThinking();
+      scrollBottom();
       break;
     case 'agentStepResult':
       removeThinking();
-      const sp = document.getElementById('step-' + msg.stepNum);
-      if (sp) { sp.classList.add('done'); sp.textContent = '✅ ${t.agentStep} ' + msg.stepNum + ': ' + msg.title; }
-      appendMsg(msg.result, false);
+      const sd = document.getElementById('step-' + msg.stepNum);
+      if (sd) { sd.classList.add('done'); sd.textContent = '✅ ${t.agentStep} ' + msg.stepNum + ': ' + msg.title; }
+      appendBotMsg(msg.result);
       break;
     case 'agentDone':
-      setSending(false);
-      appendMsg('${t.agentDone}', false);
+      setBusy(false);
+      appendBotMsg('${t.agentDone}');
       break;
   }
 });
@@ -689,9 +907,4 @@ window.addEventListener('message', e => {
 </body>
 </html>`;
     }
-}
-
-function webviewReload(view?: vscode.WebviewView) {
-    // Trigger reload by posting a reload message
-    view?.webview.postMessage({ type: 'reload' });
 }
